@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { expenseAPI, currencyAPI, ocrAPI } from '../services/api';
-import { Upload, Scan, Save, Send, ArrowLeft, Loader2, DollarSign } from 'lucide-react';
+import { Upload, Scan, Save, Send, ArrowLeft, Loader2, DollarSign, Receipt } from 'lucide-react';
 
 const CATEGORIES = ['Travel', 'Meals & Entertainment', 'Office Supplies', 'Software & Subscriptions',
   'Transportation', 'Training & Education', 'Miscellaneous'];
