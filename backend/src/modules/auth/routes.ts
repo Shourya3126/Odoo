@@ -7,7 +7,7 @@ import { config } from '../../config';
 import { validate } from '../../middleware/validate';
 import { authenticate, AuthRequest } from '../../middleware/auth';
 import { getCurrencyForCountry, generateRandomPassword } from '../../utils/helpers';
-import { sendForgotPasswordEmail } from '../../utils/email';
+import { isSmtpConfigured, sendForgotPasswordEmail } from '../../utils/email';
 import { sendSuccess, sendError } from '../../utils/response';
 import logger from '../../utils/logger';
 
@@ -128,6 +128,10 @@ router.post('/login', validate(loginSchema), async (req, res: Response) => {
 // POST /api/auth/forgot-password — with temp password expiry (24 hours)
 router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res: Response) => {
   try {
+    if (!isSmtpConfigured()) {
+      return sendError(res, 'SMTP is not configured. Password reset email is unavailable.', 503);
+    }
+
     const { email } = req.body;
     const user = await db('users').where({ email, is_active: true }).first();
     if (!user) {
@@ -145,7 +149,10 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res:
       updated_at: db.fn.now(),
     });
 
-    await sendForgotPasswordEmail(email, user.name, tempPassword);
+    const emailSent = await sendForgotPasswordEmail(email, user.name, tempPassword);
+    if (!emailSent) {
+      return sendError(res, 'Failed to send password reset email. Please verify your SMTP settings.', 502);
+    }
 
     logger.info(`Temp password sent to: ${email}`, { expiry: expiry.toISOString() });
     sendSuccess(res, { message: 'If the email exists, a temporary password has been sent.' });

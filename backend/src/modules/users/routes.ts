@@ -5,7 +5,7 @@ import db from '../../config/database';
 import { authenticate, authorize, AuthRequest } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { generateRandomPassword, createAuditLog } from '../../utils/helpers';
-import { sendPasswordEmail } from '../../utils/email';
+import { isSmtpConfigured, sendPasswordEmail } from '../../utils/email';
 import { sendSuccess, sendError } from '../../utils/response';
 import logger from '../../utils/logger';
 
@@ -149,6 +149,10 @@ router.patch('/:id', authorize('ADMIN'), validate(updateUserSchema), async (req:
 // POST /api/users/:id/send-password — with temp expiry + invitation_status tracking
 router.post('/:id/send-password', authorize('ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
+    if (!isSmtpConfigured()) {
+      return sendError(res, 'SMTP is not configured. Set SMTP_USER and SMTP_PASS before sending passwords by email.', 503);
+    }
+
     const { id } = req.params;
     const companyId = req.tenantId!;
 
@@ -168,7 +172,8 @@ router.post('/:id/send-password', authorize('ADMIN'), async (req: AuthRequest, r
       updated_at: db.fn.now(),
     });
 
-    await sendPasswordEmail(user.email, user.name, tempPassword);
+    const emailSent = await sendPasswordEmail(user.email, user.name, tempPassword);
+    if (!emailSent) return sendError(res, 'Failed to send password email. Please verify your SMTP settings.', 502);
 
     await createAuditLog({
       company_id: companyId, entity_type: 'USER', entity_id: id,
@@ -176,7 +181,7 @@ router.post('/:id/send-password', authorize('ADMIN'), async (req: AuthRequest, r
     });
 
     logger.info(`Temp password sent to ${user.email}`, { expiry: expiry.toISOString() });
-    sendSuccess(res, { message: 'Password generated successfully', tempPassword });
+    sendSuccess(res, { message: `Password sent successfully to ${user.email}` });
   } catch (err) {
     logger.error('Send password error', err);
     sendError(res, 'Internal server error');

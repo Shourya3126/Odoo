@@ -1,10 +1,12 @@
 import nodemailer from 'nodemailer';
 import { config } from '../config';
 
+export const isSmtpConfigured = () => Boolean(config.smtp.user && config.smtp.pass);
+
 const transporter = nodemailer.createTransport({
   host: config.smtp.host,
   port: config.smtp.port,
-  secure: false,
+  secure: config.smtp.port === 465,
   auth: {
     user: config.smtp.user,
     pass: config.smtp.pass,
@@ -13,11 +15,10 @@ const transporter = nodemailer.createTransport({
 
 export const sendEmail = async (to: string, subject: string, html: string): Promise<boolean> => {
   try {
-    if (!config.smtp.user || !config.smtp.pass) {
-      console.log(`📧 [EMAIL MOCK] To: ${to} | Subject: ${subject}`);
-      console.log(`📧 [EMAIL MOCK] Body: ${html}`);
-      return true;
+    if (!isSmtpConfigured()) {
+      return false;
     }
+
     await transporter.sendMail({
       from: `"Expense System" <${config.smtp.user}>`,
       to,
