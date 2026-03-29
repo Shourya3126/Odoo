@@ -176,7 +176,7 @@ router.post('/:id/send-password', authorize('ADMIN'), async (req: AuthRequest, r
     });
 
     logger.info(`Temp password sent to ${user.email}`, { expiry: expiry.toISOString() });
-    sendSuccess(res, { message: 'Password sent successfully' });
+    sendSuccess(res, { message: 'Password generated successfully', tempPassword });
   } catch (err) {
     logger.error('Send password error', err);
     sendError(res, 'Internal server error');

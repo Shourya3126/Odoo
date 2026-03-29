@@ -126,7 +126,7 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
 // SUBMIT DRAFT → SUBMITTED (strict transition)
 // ──────────────────────────────────────────────────
 
-router.post('/:id/submit', async (req: AuthRequest, res: Response) => {
+router.post('/:id([0-9a-fA-F-]+)/submit', async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const companyId = req.tenantId!;
@@ -229,7 +229,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 // GET EXPENSE DETAIL + TIMELINE + AUDIT
 // ──────────────────────────────────────────────────
 
-router.get('/:id', async (req: AuthRequest, res: Response) => {
+router.get('/:id([0-9a-fA-F-]+)', async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const companyId = req.tenantId!;
@@ -250,7 +250,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
       .orderBy('expense_approvals.created_at', 'asc');
 
     const auditLogs = await db('audit_logs')
-      .where({ entity_type: 'EXPENSE', entity_id: id, company_id: companyId })
+      .where({ 'audit_logs.entity_type': 'EXPENSE', 'audit_logs.entity_id': id, 'audit_logs.company_id': companyId })
       .leftJoin('users', 'audit_logs.actor_id', 'users.id')
       .select('audit_logs.*', 'users.name as actor_name')
       .orderBy('audit_logs.created_at', 'desc');
@@ -266,7 +266,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 // UPDATE EXPENSE — only DRAFT is editable
 // ──────────────────────────────────────────────────
 
-router.patch('/:id', upload.single('receipt'), async (req: AuthRequest, res: Response) => {
+router.patch('/:id([0-9a-fA-F-]+)', upload.single('receipt'), async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const companyId = req.tenantId!;

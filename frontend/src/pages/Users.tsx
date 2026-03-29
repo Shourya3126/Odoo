@@ -67,8 +67,8 @@ export default function Users() {
 
   const handleSendPassword = async (userId: string) => {
     try {
-      await userAPI.sendPassword(userId);
-      showToast('Password sent!', 'success');
+      const { data } = await userAPI.sendPassword(userId);
+      showToast(`Password generated: ${data.tempPassword}`, 'success');
       loadUsers();
     } catch (err: any) {
       showToast('Failed to send password', 'error');
