@@ -121,8 +121,22 @@ router.patch('/flows/:id/toggle', authorize('ADMIN'), async (req: AuthRequest, r
   try {
     const flow = await db('approval_flows').where({ id: req.params.id, company_id: req.tenantId }).first();
     if (!flow) return sendError(res, 'Flow not found', 404);
-    await db('approval_flows').where({ id: req.params.id }).update({ is_active: !flow.is_active, updated_at: db.fn.now() });
-    sendSuccess(res, { is_active: !flow.is_active });
+    const newActiveState = !flow.is_active;
+
+    await db.transaction(async (trx) => {
+      // If we are activating this one, deactivate all others first
+      if (newActiveState) {
+        await trx('approval_flows')
+          .where({ company_id: req.tenantId })
+          .update({ is_active: false, updated_at: db.fn.now() });
+      }
+      
+      await trx('approval_flows')
+        .where({ id: req.params.id })
+        .update({ is_active: newActiveState, updated_at: db.fn.now() });
+    });
+
+    sendSuccess(res, { is_active: newActiveState });
   } catch (err) {
     logger.error('Toggle flow error', err);
     sendError(res, 'Internal server error');

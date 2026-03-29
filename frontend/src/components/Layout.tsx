@@ -1,6 +1,6 @@
-import React from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
+import { useSocket } from '../hooks/useSocket';
 import {
   LayoutDashboard, Receipt, CheckCircle, Users, GitBranch,
   LogOut, Sun, Moon, Menu, X, Bell
@@ -9,6 +9,9 @@ import {
 export default function Layout() {
   const { user, company, logout, theme, toggleTheme, sidebarOpen, toggleSidebar, toast } = useStore();
   const navigate = useNavigate();
+
+  useSocket(); // Global websocket connection
+
 
   const handleLogout = () => {
     logout();

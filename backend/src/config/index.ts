@@ -19,5 +19,8 @@ export const config = {
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
   },
+  openRouter: {
+    apiKey: process.env.OPENROUTER_API_KEY || '',
+  },
   uploadDir: process.env.UPLOAD_DIR || './uploads',
 };

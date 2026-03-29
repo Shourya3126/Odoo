@@ -44,10 +44,10 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { label: 'Total Expenses', value: stats.total, icon: Receipt, color: 'var(--primary)', bg: 'rgba(99,102,241,0.12)' },
-    { label: 'Pending', value: stats.pending, icon: Clock, color: 'var(--warning)', bg: 'rgba(245,158,11,0.12)' },
-    { label: 'Approved', value: stats.approved, icon: CheckCircle, color: 'var(--success)', bg: 'rgba(16,185,129,0.12)' },
-    { label: 'Rejected', value: stats.rejected, icon: XCircle, color: 'var(--danger)', bg: 'rgba(239,68,68,0.12)' },
+    { label: 'Total Expenses', value: stats.total, icon: Receipt, color: 'var(--primary)', bg: 'rgba(76, 132, 224, 0.12)' },
+    { label: 'Pending', value: stats.pending, icon: Clock, color: 'var(--warning)', bg: 'rgba(245, 158, 11, 0.12)' },
+    { label: 'Approved', value: stats.approved, icon: CheckCircle, color: 'var(--success)', bg: 'rgba(74, 165, 154, 0.12)' },
+    { label: 'Rejected', value: stats.rejected, icon: XCircle, color: 'var(--danger)', bg: 'rgba(229, 62, 62, 0.12)' },
   ];
 
   const getStatusBadge = (status: string) => {
@@ -114,7 +114,7 @@ export default function Dashboard() {
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '10px 20px', textDecoration: 'none', color: 'inherit',
                   borderBottom: '1px solid var(--border-color)', transition: 'background 0.15s',
-                }} onMouseOver={(e) => (e.currentTarget.style.background = 'rgba(99,102,241,0.03)')}
+                }} onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
                    onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{exp.category}</div>

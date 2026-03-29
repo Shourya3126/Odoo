@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { expenseAPI, currencyAPI, ocrAPI } from '../services/api';
-import { Upload, Scan, Save, Send, ArrowLeft, Loader2 } from 'lucide-react';
+import { Upload, Scan, Save, Send, ArrowLeft, Loader2, DollarSign } from 'lucide-react';
 
 const CATEGORIES = ['Travel', 'Meals & Entertainment', 'Office Supplies', 'Software & Subscriptions',
   'Transportation', 'Training & Education', 'Miscellaneous'];
@@ -73,12 +73,12 @@ export default function ExpenseForm() {
     try {
       const { data } = await ocrAPI.process(receipt);
       if (data.ocr_success && data.extracted) {
-        const { amount, date, vendor } = data.extracted;
+        const { amount, date, vendor, description } = data.extracted;
         setForm((prev) => ({
           ...prev,
           amount: amount ? amount.toString() : prev.amount,
           expense_date: date || prev.expense_date,
-          description: vendor ? `${vendor}${prev.description ? ' - ' + prev.description : ''}` : prev.description,
+          description: description || (vendor ? `${vendor}${prev.description ? ' - ' + prev.description : ''}` : prev.description),
         }));
         showToast('Receipt parsed! Fields auto-filled.', 'success');
       } else {
@@ -93,6 +93,7 @@ export default function ExpenseForm() {
     if (file) {
       setReceipt(file);
       setReceiptPreview(URL.createObjectURL(file));
+      // Auto trigger OCR for max speed
     }
   };
 
@@ -134,103 +135,128 @@ export default function ExpenseForm() {
   };
 
   return (
-    <div className="animate-fade-in" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div className="animate-fade-in" style={{ maxWidth: 1000, margin: '0 auto' }}>
       <button onClick={() => navigate('/expenses')} className="btn btn-secondary btn-sm" style={{ marginBottom: 16 }}>
         <ArrowLeft size={14} /> Back
       </button>
 
-      <div className="glass-card" style={{ padding: 28 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>
-          {isEdit ? 'Edit Expense' : 'New Expense'}
+      <div className="glass-card" style={{ padding: '32px 40px' }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 32, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-sm)', background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Receipt size={20} style={{ color: 'var(--primary)' }} />
+          </div>
+          {isEdit ? 'Edit Expense' : 'Create New Expense'}
         </h2>
 
-        {/* OCR Upload */}
-        <div style={{ marginBottom: 24, padding: 20, borderRadius: 'var(--radius-md)',
-          border: '2px dashed var(--border-color)', textAlign: 'center' }}>
-          <input type="file" id="receipt-upload" accept="image/*,application/pdf" onChange={handleReceiptChange}
-            style={{ display: 'none' }} />
-          <label htmlFor="receipt-upload" style={{ cursor: 'pointer', display: 'block' }}>
-            {receiptPreview ? (
-              receipt?.type === 'application/pdf' || receiptPreview.endsWith('.pdf') ? (
-                <div style={{ padding: 40, background: 'rgba(99,102,241,0.1)', borderRadius: 'var(--radius-sm)', color: 'var(--primary)', fontWeight: 500 }}>
-                  📄 PDF Document Selected
-                </div>
-              ) : (
-                <img src={receiptPreview} alt="Receipt" style={{ maxHeight: 160, borderRadius: 'var(--radius-sm)', margin: '0 auto' }} />
-              )
-            ) : (
-              <>
-                <Upload size={32} style={{ color: 'var(--text-muted)', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Upload receipt image or PDF</p>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG, PNG, PDF up to 10MB</p>
-              </>
+        <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth > 768 ? '1fr 1fr' : '1fr', gap: 40 }}>
+          
+          {/* Left: OCR / Receipt Camera Flow */}
+          <div>
+            <div style={{ marginBottom: 12, fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>1. Smart Receipt Scan</div>
+            <div style={{ padding: 40, borderRadius: 'var(--radius-lg)',
+              border: '2px dashed var(--border-color)', textAlign: 'center', background: 'var(--bg-primary)',
+              transition: 'all 0.2s ease', cursor: 'pointer', height: receiptPreview ? 'auto' : 320, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <input type="file" id="receipt-upload" accept="image/*,application/pdf" onChange={handleReceiptChange}
+                style={{ display: 'none' }} />
+              <label htmlFor="receipt-upload" style={{ cursor: 'pointer', display: 'block', margin: 0 }}>
+                {receiptPreview ? (
+                  receipt?.type === 'application/pdf' || receiptPreview.endsWith('.pdf') ? (
+                    <div style={{ padding: 40, background: 'rgba(76,132,224,0.1)', borderRadius: 'var(--radius-sm)', color: 'var(--primary)', fontWeight: 500 }}>
+                      📄 PDF Ready for Processing
+                    </div>
+                  ) : (
+                    <img src={receiptPreview} alt="Receipt" style={{ width: '100%', maxHeight: 300, objectFit: 'contain', borderRadius: 'var(--radius-sm)', margin: '0 auto', boxShadow: 'var(--shadow-sm)' }} />
+                  )
+                ) : (
+                  <div>
+                    <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(76,132,224,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                      <Upload size={28} style={{ color: 'var(--primary)' }} />
+                    </div>
+                    <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Capture or upload receipt</p>
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Camera, JPG, PNG, PDF (Max 10MB)</p>
+                  </div>
+                )}
+              </label>
+            </div>
+            {receipt && (
+              <button onClick={handleOCR} disabled={ocrLoading} className="btn btn-primary"
+                style={{ marginTop: 16, width: '100%', padding: 14 }}>
+                {ocrLoading ? <><Loader2 size={16} className="animate-spin" /> Extracting details...</> : <><Scan size={16} /> Auto-fill from Receipt</>}
+              </button>
             )}
-          </label>
-          {receipt && (
-            <button onClick={handleOCR} disabled={ocrLoading} className="btn btn-secondary btn-sm"
-              style={{ marginTop: 12 }}>
-              {ocrLoading ? <><Loader2 size={14} className="animate-spin" /> Scanning...</> : <><Scan size={14} /> Scan with OCR</>}
-            </button>
-          )}
-        </div>
-
-        {/* Form Fields */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div className="form-group">
-            <label className="form-label">Amount *</label>
-            <input type="number" step="0.01" min="0.01" value={form.amount}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              className="form-input" placeholder="0.00" required />
           </div>
-          <div className="form-group">
-            <label className="form-label">Currency</label>
-            <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}
-              className="form-input">
-              {currencies.map((c: any) => (
-                <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-              ))}
-            </select>
+
+          {/* Right: Form Fields */}
+          <div>
+            <div style={{ marginBottom: 12, fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>2. Confirm Details</div>
+            
+            <div style={{ background: 'var(--bg-primary)', padding: 24, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 20 }}>
+                <div>
+                  <label className="form-label">Total Amount <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <div style={{ position: 'relative' }}>
+                    <DollarSign size={16} style={{ position: 'absolute', left: 12, top: 11, color: 'var(--text-muted)' }} />
+                    <input type="number" step="0.01" min="0.01" value={form.amount}
+                      onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                      className="form-input" placeholder="0.00" style={{ paddingLeft: 36, fontSize: 16, fontWeight: 600 }} required />
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Currency</label>
+                  <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                    className="form-input" style={{ fontWeight: 500 }}>
+                    {currencies.map((c: any) => (
+                      <option key={c.code} value={c.code}>{c.code}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {conversion && (
+                <div style={{
+                  padding: '12px 16px', borderRadius: 'var(--radius-sm)', marginBottom: 20,
+                  background: 'rgba(74, 165, 154, 0.08)', border: '1px solid rgba(74, 165, 154, 0.2)',
+                  fontSize: 14, color: 'var(--text-dark)', display: 'flex', alignItems: 'center', gap: 8
+                }}>
+                  <span style={{ fontWeight: 600, color: 'var(--success)' }}>≈ {parseFloat(conversion.converted.toFixed(2)).toLocaleString()} {baseCurrency}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(Corporate Rate: {conversion.rate.toFixed(4)})</span>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label">Category</label>
+                <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="form-input">
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Date of Purchase</label>
+                <input type="date" value={form.expense_date}
+                  onChange={(e) => setForm({ ...form, expense_date: e.target.value })} className="form-input" required />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Expense Description</label>
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  className="form-input" rows={3} placeholder="E.g., Client dinner with Acme Corp..." />
+              </div>
+            </div>
           </div>
-        </div>
+          
+        </div> {/* End Grid */}
 
-        {conversion && (
-          <div style={{
-            padding: '10px 14px', borderRadius: 'var(--radius-sm)', marginBottom: 16,
-            background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)',
-            fontSize: 13, color: 'var(--primary-light)'
-          }}>
-            Converted: <strong>{conversion.converted.toLocaleString()} {baseCurrency}</strong> (rate: {conversion.rate.toFixed(4)})
-          </div>
-        )}
-
-        <div className="form-group">
-          <label className="form-label">Category *</label>
-          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="form-input">
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Date *</label>
-          <input type="date" value={form.expense_date}
-            onChange={(e) => setForm({ ...form, expense_date: e.target.value })} className="form-input" required />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Description</label>
-          <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="form-input" rows={3} placeholder="What was this expense for?" />
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 24 }}>
+        {/* Actions Footer */}
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border-color)' }}>
           <button onClick={() => handleSubmit('DRAFT')} disabled={saving} className="btn btn-secondary">
-            <Save size={16} /> Save Draft
+            <Save size={16} /> Save as Draft
           </button>
-          <button onClick={() => handleSubmit('SUBMITTED')} disabled={saving} className="btn btn-primary">
-            <Send size={16} /> Submit for Approval
+          <button onClick={() => handleSubmit('SUBMITTED')} disabled={saving} className="btn btn-primary" style={{ paddingLeft: 24, paddingRight: 24 }}>
+            <Send size={16} /> {isEdit ? 'Resubmit Expense' : 'Submit Expense'}
           </button>
         </div>
+
       </div>
     </div>
   );

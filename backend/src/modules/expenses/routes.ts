@@ -250,7 +250,9 @@ router.get('/:id([0-9a-fA-F-]+)', async (req: AuthRequest, res: Response) => {
       .orderBy('expense_approvals.created_at', 'asc');
 
     const auditLogs = await db('audit_logs')
-      .where({ 'audit_logs.entity_type': 'EXPENSE', 'audit_logs.entity_id': id, 'audit_logs.company_id': companyId })
+      .where('audit_logs.entity_type', 'EXPENSE')
+      .where('audit_logs.entity_id', id)
+      .where('audit_logs.company_id', companyId)
       .leftJoin('users', 'audit_logs.actor_id', 'users.id')
       .select('audit_logs.*', 'users.name as actor_name')
       .orderBy('audit_logs.created_at', 'desc');
