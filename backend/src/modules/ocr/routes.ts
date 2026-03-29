@@ -5,7 +5,7 @@ import fs from 'fs';
 import { AuthRequest } from '../../middleware/auth';
 import { sendSuccess, sendError } from '../../utils/response';
 import { config } from '../../config';
-import { logger } from '../../utils/logger';
+import logger from '../../utils/logger';
 
 const router = Router();
 
@@ -87,10 +87,104 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
   }
 });
 
+const OCR_CATEGORIES = [
+  'Travel',
+  'Meals & Entertainment',
+  'Office Supplies',
+  'Software & Subscriptions',
+  'Transportation',
+  'Training & Education',
+  'Miscellaneous',
+] as const;
+
+function toIsoDate(year: number, month: number, day: number): string | null {
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(dt.getTime())
+    || dt.getUTCFullYear() !== year
+    || dt.getUTCMonth() !== month - 1
+    || dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return dt.toISOString().slice(0, 10);
+}
+
+function normalizeDate(raw: string): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+
+  let m = value.match(/^(\d{4})[\-/.](\d{1,2})[\-/.](\d{1,2})$/);
+  if (m) return toIsoDate(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+
+  m = value.match(/^(\d{2})[\-/.](\d{2})[\-/.](\d{2})$/);
+  if (m) {
+    const yy = parseInt(m[1], 10);
+    const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+    return toIsoDate(year, parseInt(m[2], 10), parseInt(m[3], 10));
+  }
+
+  m = value.match(/^(\d{1,2})[\-/.](\d{1,2})[\-/.](\d{2,4})$/);
+  if (m) {
+    const first = parseInt(m[1], 10);
+    const second = parseInt(m[2], 10);
+    let year = parseInt(m[3], 10);
+    if (year < 100) year = year >= 70 ? 1900 + year : 2000 + year;
+    const day = first > 12 ? first : second;
+    const month = first > 12 ? second : first;
+    return toIsoDate(year, month, day);
+  }
+
+  return null;
+}
+
+function inferCategory(text: string, description: string | null): typeof OCR_CATEGORIES[number] {
+  const source = `${text}\n${description || ''}`.toLowerCase();
+
+  const labeledMatch = source.match(/(?:category|expense\s*type)\s*[:\-]\s*([a-z &]+)/i);
+  if (labeledMatch) {
+    const lbl = labeledMatch[1].trim().toLowerCase();
+    if (lbl.includes('meal') || lbl.includes('entertain')) return 'Meals & Entertainment';
+    if (lbl.includes('office') || lbl.includes('stationery') || lbl.includes('suppl')) return 'Office Supplies';
+    if (lbl.includes('software') || lbl.includes('subscription') || lbl.includes('saas')) return 'Software & Subscriptions';
+    if (lbl.includes('transport') || lbl.includes('uber') || lbl.includes('taxi') || lbl.includes('bus') || lbl.includes('train')) return 'Transportation';
+    if (lbl.includes('travel') || lbl.includes('flight') || lbl.includes('hotel') || lbl.includes('trip')) return 'Travel';
+    if (lbl.includes('training') || lbl.includes('education') || lbl.includes('course') || lbl.includes('workshop')) return 'Training & Education';
+  }
+
+  if (/restaurant|cafe|coffee|dinner|lunch|breakfast|bar|food|meal/.test(source)) return 'Meals & Entertainment';
+  if (/office|stationery|paper|printer|notebook|supplies/.test(source)) return 'Office Supplies';
+  if (/software|subscription|license|saas|cloud|adobe|microsoft|google workspace|slack|notion|figma/.test(source)) return 'Software & Subscriptions';
+  if (/uber|ola|taxi|cab|bus|train|metro|fuel|petrol|diesel|toll|parking|transport/.test(source)) return 'Transportation';
+  if (/flight|airline|hotel|airbnb|booking|trip|travel/.test(source)) return 'Travel';
+  if (/training|education|course|certification|workshop|seminar|conference/.test(source)) return 'Training & Education';
+
+  return 'Miscellaneous';
+}
+
 // Helper: Aggressive Offline RegEx Parser
-function parseRobustReceiptText(text: string): { amount: number | null; date: string | null; vendor: string | null; description: string | null } {
-  const result: { amount: number | null; date: string | null; vendor: string | null; description: string | null } = {
-    amount: null, date: null, vendor: null, description: 'Receipt processed via local OCR scanner',
+function parseRobustReceiptText(text: string): {
+  amount: number | null;
+  currency: string | null;
+  date: string | null;
+  vendor: string | null;
+  description: string | null;
+  category: typeof OCR_CATEGORIES[number];
+} {
+  const result: {
+    amount: number | null;
+    currency: string | null;
+    date: string | null;
+    vendor: string | null;
+    description: string | null;
+    category: typeof OCR_CATEGORIES[number];
+  } = {
+    amount: null,
+    currency: null,
+    date: null,
+    vendor: null,
+    description: null,
+    category: 'Miscellaneous',
   };
 
   // 1. EXTRACT AMOUNT: Find ALL currency-like values and select the mathematical maximum.
@@ -121,6 +215,13 @@ function parseRobustReceiptText(text: string): { amount: number | null; date: st
   
   result.amount = maxAmount > 0 ? maxAmount : null;
 
+  // Currency: symbol or code-based inference
+  if (/₹|\bINR\b/i.test(text)) result.currency = 'INR';
+  else if (/\$|\bUSD\b/i.test(text)) result.currency = 'USD';
+  else if (/€|\bEUR\b/i.test(text)) result.currency = 'EUR';
+  else if (/£|\bGBP\b/i.test(text)) result.currency = 'GBP';
+  else if (/¥|\bJPY\b/i.test(text)) result.currency = 'JPY';
+
   // 2. EXTRACT DATE: Strict date pattern matching
   const datePatterns = [
     /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/, // DD/MM/YYYY
@@ -131,7 +232,7 @@ function parseRobustReceiptText(text: string): { amount: number | null; date: st
   for (const pattern of datePatterns) {
     const dMatch = text.match(pattern);
     if (dMatch) {
-      result.date = dMatch[1].replace(/\./g, '-');
+      result.date = normalizeDate(dMatch[1].replace(/\./g, '-')) || dMatch[1].replace(/\./g, '-');
       break;
     }
   }
@@ -153,6 +254,17 @@ function parseRobustReceiptText(text: string): { amount: number | null; date: st
         }
     }
   }
+
+  const explicitDescription = text.match(/(?:description|purpose|notes?)\s*[:\-]\s*(.+)/i);
+  if (explicitDescription && explicitDescription[1]) {
+    result.description = explicitDescription[1].split('\n')[0].trim();
+  } else if (result.vendor) {
+    result.description = `${result.vendor} expense`;
+  } else {
+    result.description = 'Receipt scanned via OCR';
+  }
+
+  result.category = inferCategory(text, result.description);
 
   return result;
 }

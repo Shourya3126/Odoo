@@ -73,11 +73,13 @@ export default function ExpenseForm() {
     try {
       const { data } = await ocrAPI.process(receipt);
       if (data.ocr_success && data.extracted) {
-        const { amount, date, vendor, description } = data.extracted;
+        const { amount, date, vendor, description, currency, category } = data.extracted;
         setForm((prev) => ({
           ...prev,
           amount: amount ? amount.toString() : prev.amount,
           expense_date: date || prev.expense_date,
+          currency: currency || prev.currency,
+          category: category || prev.category,
           description: description || (vendor ? `${vendor}${prev.description ? ' - ' + prev.description : ''}` : prev.description),
         }));
         showToast('Receipt parsed! Fields auto-filled.', 'success');

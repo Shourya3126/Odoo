@@ -34,6 +34,61 @@ function isValidTransition(from: string, to: string): boolean {
   return VALID_TRANSITIONS[from]?.includes(to) || false;
 }
 
+function toIsoDate(year: number, month: number, day: number): string | null {
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(dt.getTime())
+    || dt.getUTCFullYear() !== year
+    || dt.getUTCMonth() !== month - 1
+    || dt.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return dt.toISOString().slice(0, 10);
+}
+
+function normalizeExpenseDate(input: string): string | null {
+  if (!input || typeof input !== 'string') return null;
+  const value = input.trim();
+  if (!value) return null;
+
+  // Already ISO (YYYY-MM-DD)
+  let m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    return toIsoDate(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+  }
+
+  // OCR commonly returns YY-MM-DD, e.g. 24-03-28 -> 2024-03-28
+  m = value.match(/^(\d{2})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const yy = parseInt(m[1], 10);
+    const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+    return toIsoDate(year, parseInt(m[2], 10), parseInt(m[3], 10));
+  }
+
+  // D/M/Y or M/D/Y with / or - delimiters
+  m = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (m) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    let y = parseInt(m[3], 10);
+    if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y;
+
+    // If first token > 12, treat as DD/MM/YYYY; otherwise default to MM/DD/YYYY.
+    const day = a > 12 ? a : b;
+    const month = a > 12 ? b : a;
+    return toIsoDate(y, month, day);
+  }
+
+  // Try native parser for month-name formats (e.g., Mar 28, 2024)
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
 // File upload config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -79,7 +134,8 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
     const currency = (req.body.currency || '').toUpperCase();
     const category = req.body.category;
     const description = req.body.description || '';
-    const expense_date = req.body.expense_date;
+    const rawExpenseDate = req.body.expense_date;
+    const expense_date = normalizeExpenseDate(rawExpenseDate);
     const converted_amount = req.body.converted_amount ? parseFloat(req.body.converted_amount) : null;
     const conversion_rate = req.body.conversion_rate ? parseFloat(req.body.conversion_rate) : null;
     const status = req.body.status || 'DRAFT';
@@ -89,7 +145,8 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
     if (isNaN(amount)) return sendError(res, 'Amount must be a valid number', 400);
     if (currency.length !== 3) return sendError(res, 'Currency must be a 3-letter code', 400);
     if (!category || category.trim().length === 0) return sendError(res, 'Category is required', 400);
-    if (!expense_date) return sendError(res, 'Expense date is required', 400);
+    if (!rawExpenseDate) return sendError(res, 'Expense date is required', 400);
+    if (!expense_date) return sendError(res, 'Expense date format is invalid', 400);
 
     const receipt_url = req.file ? `/uploads/receipts/${req.file.filename}` : null;
 
@@ -291,7 +348,11 @@ router.patch('/:id([0-9a-fA-F-]+)', upload.single('receipt'), async (req: AuthRe
     if (req.body.currency) updates.currency = req.body.currency.toUpperCase();
     if (req.body.category) updates.category = req.body.category;
     if (req.body.description !== undefined) updates.description = req.body.description;
-    if (req.body.expense_date) updates.expense_date = req.body.expense_date;
+    if (req.body.expense_date) {
+      const normalizedDate = normalizeExpenseDate(req.body.expense_date);
+      if (!normalizedDate) return sendError(res, 'Expense date format is invalid', 400);
+      updates.expense_date = normalizedDate;
+    }
     if (req.body.converted_amount) updates.converted_amount = parseFloat(req.body.converted_amount);
     if (req.body.conversion_rate) updates.conversion_rate = parseFloat(req.body.conversion_rate);
     if (req.file) updates.receipt_url = `/uploads/receipts/${req.file.filename}`;
