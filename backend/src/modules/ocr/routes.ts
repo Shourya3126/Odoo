@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../../middleware/auth';
+import { sendSuccess, sendError } from '../../utils/response';
+import logger from '../../utils/logger';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -35,8 +37,7 @@ const upload = multer({
 router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) {
-      res.status(400).json({ error: 'No file uploaded' });
-      return;
+      return sendError(res, 'No file uploaded', 400);
     }
 
     const filePath = req.file.path;
@@ -54,30 +55,24 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
       });
       extractedText = data.text;
     } catch (ocrErr) {
-      console.error('Tesseract OCR failed:', ocrErr);
-      // Return receipt URL without OCR data
-      res.json({
+      logger.warn('Tesseract OCR failed', { error: String(ocrErr) });
+      return sendSuccess(res, {
         receipt_url: `/uploads/ocr/${req.file.filename}`,
-        ocr_success: false,
-        extracted: null,
-        raw_text: null,
+        ocr_success: false, extracted: null, raw_text: null,
         message: 'OCR processing failed, receipt uploaded successfully',
       });
-      return;
     }
 
     // Parse extracted text
     const parsed = parseReceiptText(extractedText);
 
-    res.json({
+    sendSuccess(res, {
       receipt_url: `/uploads/ocr/${req.file.filename}`,
-      ocr_success: true,
-      extracted: parsed,
-      raw_text: extractedText,
+      ocr_success: true, extracted: parsed, raw_text: extractedText,
     });
   } catch (err) {
-    console.error('OCR error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('OCR error', err);
+    sendError(res, 'Internal server error');
   }
 });
 

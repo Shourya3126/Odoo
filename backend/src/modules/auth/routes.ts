@@ -8,10 +8,11 @@ import { validate } from '../../middleware/validate';
 import { authenticate, AuthRequest } from '../../middleware/auth';
 import { getCurrencyForCountry, generateRandomPassword } from '../../utils/helpers';
 import { sendForgotPasswordEmail } from '../../utils/email';
+import { sendSuccess, sendError } from '../../utils/response';
+import logger from '../../utils/logger';
 
 const router = Router();
 
-// Validation schemas
 const signupSchema = z.object({
   companyName: z.string().min(2).max(100),
   name: z.string().min(2).max(100),
@@ -25,9 +26,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-const forgotPasswordSchema = z.object({
-  email: z.string().email(),
-});
+const forgotPasswordSchema = z.object({ email: z.string().email() });
 
 const resetPasswordSchema = z.object({
   currentPassword: z.string().min(1),
@@ -40,32 +39,20 @@ router.post('/signup', validate(signupSchema), async (req, res: Response) => {
     const { companyName, name, email, password, country } = req.body;
     const baseCurrency = getCurrencyForCountry(country);
 
-    // Check if email already exists
     const existingUser = await db('users').where({ email }).first();
-    if (existingUser) {
-      res.status(409).json({ error: 'Email already registered' });
-      return;
-    }
+    if (existingUser) return sendError(res, 'Email already registered', 409);
 
     const result = await db.transaction(async (trx) => {
-      // Create company
       const [company] = await trx('companies').insert({
-        name: companyName,
-        country: country.toUpperCase(),
-        base_currency: baseCurrency,
+        name: companyName, country: country.toUpperCase(), base_currency: baseCurrency,
       }).returning('*');
 
-      // Create admin user
       const passwordHash = await bcrypt.hash(password, 12);
       const [user] = await trx('users').insert({
-        company_id: company.id,
-        name,
-        email,
-        password_hash: passwordHash,
-        role: 'ADMIN',
+        company_id: company.id, name, email, password_hash: passwordHash,
+        role: 'ADMIN', invitation_status: 'ACCEPTED',
       }).returning(['id', 'company_id', 'name', 'email', 'role']);
 
-      // Create default expense categories
       await trx('expense_categories').insert([
         { company_id: company.id, name: 'Travel' },
         { company_id: company.id, name: 'Meals & Entertainment' },
@@ -79,139 +66,117 @@ router.post('/signup', validate(signupSchema), async (req, res: Response) => {
       return { company, user };
     });
 
-    // Generate JWT
     const token = jwt.sign(
-      {
-        userId: result.user.id,
-        companyId: result.user.company_id,
-        role: result.user.role,
-        email: result.user.email,
-      },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn as string }
+      { userId: result.user.id, companyId: result.user.company_id, role: result.user.role, email: result.user.email },
+      config.jwt.secret, { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
     );
 
-    res.status(201).json({
-      token,
-      user: result.user,
-      company: result.company,
-    });
+    logger.info(`Company created: ${companyName}`, { companyId: result.company.id });
+    sendSuccess(res, { token, user: result.user, company: result.company }, 201);
   } catch (err) {
-    console.error('Signup error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Signup error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
-// POST /api/auth/login
+// POST /api/auth/login — with temp password expiry check + force reset
 router.post('/login', validate(loginSchema), async (req, res: Response) => {
   try {
     const { email, password } = req.body;
+    const user = await db('users').where({ email, is_active: true }).first();
+    if (!user) return sendError(res, 'Invalid credentials', 401);
 
-    const user = await db('users')
-      .where({ email, is_active: true })
-      .first();
-
-    if (!user) {
-      res.status(401).json({ error: 'Invalid credentials' });
-      return;
+    // Check temp password expiry
+    if (user.temp_password_expiry && new Date(user.temp_password_expiry) < new Date()) {
+      return sendError(res, 'Temporary password has expired. Please request a new one.', 401);
     }
 
     const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      res.status(401).json({ error: 'Invalid credentials' });
-      return;
-    }
+    if (!validPassword) return sendError(res, 'Invalid credentials', 401);
 
     const company = await db('companies').where({ id: user.company_id }).first();
 
+    // Mark invitation as ACCEPTED on first login
+    if (user.invitation_status !== 'ACCEPTED') {
+      await db('users').where({ id: user.id }).update({
+        invitation_status: 'ACCEPTED',
+        temp_password_expiry: null, // Clear expiry on successful login
+        updated_at: db.fn.now(),
+      });
+    }
+
     const token = jwt.sign(
-      {
-        userId: user.id,
-        companyId: user.company_id,
-        role: user.role,
-        email: user.email,
-      },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn as string }
+      { userId: user.id, companyId: user.company_id, role: user.role, email: user.email },
+      config.jwt.secret, { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
     );
 
-    res.json({
+    logger.info(`User logged in: ${email}`);
+    sendSuccess(res, {
       token,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        company_id: user.company_id,
-        must_reset_password: user.must_reset_password,
+        id: user.id, name: user.name, email: user.email, role: user.role,
+        company_id: user.company_id, must_reset_password: user.must_reset_password,
       },
       company,
     });
   } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Login error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
-// POST /api/auth/forgot-password
+// POST /api/auth/forgot-password — with temp password expiry (24 hours)
 router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res: Response) => {
   try {
     const { email } = req.body;
-
     const user = await db('users').where({ email, is_active: true }).first();
     if (!user) {
-      // Don't reveal if email exists
-      res.json({ message: 'If the email exists, a temporary password has been sent.' });
-      return;
+      return sendSuccess(res, { message: 'If the email exists, a temporary password has been sent.' });
     }
 
     const tempPassword = generateRandomPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 12);
+    const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     await db('users').where({ id: user.id }).update({
       password_hash: passwordHash,
       must_reset_password: true,
+      temp_password_expiry: expiry,
       updated_at: db.fn.now(),
     });
 
     await sendForgotPasswordEmail(email, user.name, tempPassword);
 
-    res.json({ message: 'If the email exists, a temporary password has been sent.' });
+    logger.info(`Temp password sent to: ${email}`, { expiry: expiry.toISOString() });
+    sendSuccess(res, { message: 'If the email exists, a temporary password has been sent.' });
   } catch (err) {
-    console.error('Forgot password error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Forgot password error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
-// POST /api/auth/reset-password (authenticated)
+// POST /api/auth/reset-password
 router.post('/reset-password', authenticate, validate(resetPasswordSchema), async (req: AuthRequest, res: Response) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user!.userId;
 
     const user = await db('users').where({ id: userId }).first();
-    if (!user) {
-      res.status(404).json({ error: 'User not found' });
-      return;
-    }
+    if (!user) return sendError(res, 'User not found', 404);
 
     const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!validPassword) {
-      res.status(401).json({ error: 'Current password is incorrect' });
-      return;
-    }
+    if (!validPassword) return sendError(res, 'Current password is incorrect', 401);
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await db('users').where({ id: userId }).update({
-      password_hash: passwordHash,
-      must_reset_password: false,
-      updated_at: db.fn.now(),
+      password_hash: passwordHash, must_reset_password: false,
+      temp_password_expiry: null, updated_at: db.fn.now(),
     });
 
-    res.json({ message: 'Password updated successfully' });
+    sendSuccess(res, { message: 'Password updated successfully' });
   } catch (err) {
-    console.error('Reset password error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Reset password error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
@@ -220,15 +185,13 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const user = await db('users')
       .where({ id: req.user!.userId })
-      .select('id', 'name', 'email', 'role', 'company_id', 'must_reset_password', 'manager_id')
+      .select('id', 'name', 'email', 'role', 'company_id', 'must_reset_password', 'manager_id', 'invitation_status')
       .first();
-
     const company = await db('companies').where({ id: req.user!.companyId }).first();
-
-    res.json({ user, company });
+    sendSuccess(res, { user, company });
   } catch (err) {
-    console.error('Get me error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get me error', err);
+    sendError(res, 'Internal server error');
   }
 });
 

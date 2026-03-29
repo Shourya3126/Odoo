@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../../middleware/auth';
+import { sendSuccess, sendError } from '../../utils/response';
+import logger from '../../utils/logger';
 import db from '../../config/database';
 import redisClient from '../../config/redis';
 
@@ -18,17 +20,16 @@ router.get('/rates', async (req: AuthRequest, res: Response) => {
       if (redisClient.isOpen) {
         const cached = await redisClient.get(`rates:${base}`);
         if (cached) {
-          res.json(JSON.parse(cached));
-          return;
+          return sendSuccess(res, { ...JSON.parse(cached), source: 'redis' });
         }
       }
     } catch (e) {}
 
-    // Try API
+    // Try live API
     try {
       const response = await fetch(`${EXCHANGE_API_BASE}/${base}`);
       if (response.ok) {
-        const data = await response.json();
+        const data: any = await response.json();
         const rates = data.rates;
 
         // Cache in Redis (1 hour)
@@ -40,48 +41,31 @@ router.get('/rates', async (req: AuthRequest, res: Response) => {
 
         // Cache in DB for offline fallback
         const entries = Object.entries(rates).map(([target, rate]) => ({
-          base_currency: base,
-          target_currency: target,
-          rate: rate as number,
-          fetched_at: new Date(),
+          base_currency: base, target_currency: target, rate: rate as number, fetched_at: new Date(),
         }));
-
-        // Upsert rates
         for (const entry of entries) {
-          await db('currency_cache')
-            .insert(entry)
-            .onConflict(['base_currency', 'target_currency'])
-            .merge();
+          await db('currency_cache').insert(entry).onConflict(['base_currency', 'target_currency']).merge();
         }
 
-        res.json({ base, rates, fetched_at: new Date().toISOString(), source: 'api' });
-        return;
+        return sendSuccess(res, { base, rates, fetched_at: new Date().toISOString(), source: 'api' });
       }
     } catch (apiErr) {
-      console.warn('Exchange rate API failed, falling back to cache:', apiErr);
+      logger.warn('Exchange rate API failed, falling back to cache', { error: String(apiErr) });
     }
 
     // Fallback to DB cache
-    const cached = await db('currency_cache')
-      .where({ base_currency: base })
-      .select('target_currency', 'rate', 'fetched_at');
-
+    const cached = await db('currency_cache').where({ base_currency: base }).select('target_currency', 'rate', 'fetched_at');
     if (cached.length > 0) {
       const rates: Record<string, number> = {};
       cached.forEach((c: any) => { rates[c.target_currency] = parseFloat(c.rate); });
-      res.json({
-        base,
-        rates,
-        fetched_at: cached[0].fetched_at,
-        source: 'db_cache',
-      });
-      return;
+      logger.info(`Using DB fallback rates for ${base}`, { count: cached.length });
+      return sendSuccess(res, { base, rates, fetched_at: cached[0].fetched_at, source: 'db_fallback', is_fallback: true });
     }
 
-    res.status(503).json({ error: 'Exchange rates unavailable' });
+    sendError(res, 'Exchange rates unavailable', 503);
   } catch (err) {
-    console.error('Get rates error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get rates error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
@@ -92,26 +76,18 @@ router.get('/convert', async (req: AuthRequest, res: Response) => {
     const to = (req.query.to as string || 'USD').toUpperCase();
     const amount = parseFloat(req.query.amount as string || '0');
 
-    if (amount <= 0) {
-      res.status(400).json({ error: 'Amount must be positive' });
-      return;
-    }
-    if (from === to) {
-      res.json({ from, to, amount, converted_amount: amount, rate: 1 });
-      return;
-    }
+    if (isNaN(amount) || amount <= 0) return sendError(res, 'Amount must be a positive number', 400);
+    if (from.length !== 3 || to.length !== 3) return sendError(res, 'Invalid currency code', 400);
+    if (from === to) return sendSuccess(res, { from, to, amount, converted_amount: amount, rate: 1, is_fallback: false });
 
-    // Get rate
     let rate: number | null = null;
+    let isFallback = false;
 
     // Try Redis
     try {
       if (redisClient.isOpen) {
         const cached = await redisClient.get(`rates:${from}`);
-        if (cached) {
-          const data = JSON.parse(cached);
-          rate = data.rates[to];
-        }
+        if (cached) rate = JSON.parse(cached).rates[to];
       }
     } catch (e) {}
 
@@ -120,31 +96,32 @@ router.get('/convert', async (req: AuthRequest, res: Response) => {
       try {
         const response = await fetch(`${EXCHANGE_API_BASE}/${from}`);
         if (response.ok) {
-          const data = await response.json();
+          const data: any = await response.json();
           rate = data.rates[to];
         }
-      } catch (e) {}
+      } catch (e) {
+        logger.warn('Currency API failed during conversion', { from, to });
+      }
     }
 
-    // Fallback to DB
+    // Fallback to DB — log fallback usage
     if (!rate) {
       const cached = await db('currency_cache')
-        .where({ base_currency: from, target_currency: to })
-        .first();
-      if (cached) rate = parseFloat(cached.rate);
+        .where({ base_currency: from, target_currency: to }).first();
+      if (cached) {
+        rate = parseFloat(cached.rate);
+        isFallback = true;
+        logger.warn(`Using DB fallback rate for ${from}→${to}: ${rate}`, { fetched_at: cached.fetched_at });
+      }
     }
 
-    if (!rate) {
-      res.status(503).json({ error: 'Conversion rate unavailable' });
-      return;
-    }
+    if (!rate) return sendError(res, 'Conversion rate unavailable', 503);
 
     const converted_amount = Math.round(amount * rate * 100) / 100;
-
-    res.json({ from, to, amount, converted_amount, rate });
+    sendSuccess(res, { from, to, amount, converted_amount, rate, is_fallback: isFallback });
   } catch (err) {
-    console.error('Convert error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Convert error', err);
+    sendError(res, 'Internal server error');
   }
 });
 
@@ -181,7 +158,7 @@ router.get('/supported', async (req: AuthRequest, res: Response) => {
     { code: 'TRY', name: 'Turkish Lira', symbol: '₺' },
     { code: 'RUB', name: 'Russian Ruble', symbol: '₽' },
   ];
-  res.json({ currencies });
+  sendSuccess(res, { currencies });
 });
 
 export default router;

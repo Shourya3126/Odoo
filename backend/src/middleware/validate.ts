@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
+import { sendValidationError } from '../utils/response';
 
 export const validate = (schema: ZodSchema) => {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -8,13 +9,10 @@ export const validate = (schema: ZodSchema) => {
       next();
     } catch (err) {
       if (err instanceof ZodError) {
-        res.status(400).json({
-          error: 'Validation failed',
-          details: err.errors.map((e) => ({
-            field: e.path.join('.'),
-            message: e.message,
-          })),
-        });
+        sendValidationError(res, err.errors.map((e) => ({
+          field: e.path.join('.'),
+          message: e.message,
+        })));
         return;
       }
       next(err);
