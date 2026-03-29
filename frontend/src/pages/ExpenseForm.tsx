@@ -147,16 +147,22 @@ export default function ExpenseForm() {
         {/* OCR Upload */}
         <div style={{ marginBottom: 24, padding: 20, borderRadius: 'var(--radius-md)',
           border: '2px dashed var(--border-color)', textAlign: 'center' }}>
-          <input type="file" id="receipt-upload" accept="image/*" onChange={handleReceiptChange}
+          <input type="file" id="receipt-upload" accept="image/*,application/pdf" onChange={handleReceiptChange}
             style={{ display: 'none' }} />
           <label htmlFor="receipt-upload" style={{ cursor: 'pointer', display: 'block' }}>
             {receiptPreview ? (
-              <img src={receiptPreview} alt="Receipt" style={{ maxHeight: 160, borderRadius: 'var(--radius-sm)', margin: '0 auto' }} />
+              receipt?.type === 'application/pdf' || receiptPreview.endsWith('.pdf') ? (
+                <div style={{ padding: 40, background: 'rgba(99,102,241,0.1)', borderRadius: 'var(--radius-sm)', color: 'var(--primary)', fontWeight: 500 }}>
+                  📄 PDF Document Selected
+                </div>
+              ) : (
+                <img src={receiptPreview} alt="Receipt" style={{ maxHeight: 160, borderRadius: 'var(--radius-sm)', margin: '0 auto' }} />
+              )
             ) : (
               <>
                 <Upload size={32} style={{ color: 'var(--text-muted)', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Upload receipt image</p>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG, PNG up to 10MB</p>
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Upload receipt image or PDF</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG, PNG, PDF up to 10MB</p>
               </>
             )}
           </label>

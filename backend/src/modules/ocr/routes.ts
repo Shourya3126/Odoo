@@ -26,10 +26,10 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff'];
+    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.pdf'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('Invalid file type for OCR. Use image files.'));
+    else cb(new Error('Invalid file type for OCR. Use image or PDF files.'));
   },
 });
 
@@ -41,25 +41,34 @@ router.post('/', upload.single('receipt'), async (req: AuthRequest, res: Respons
     }
 
     const filePath = req.file.path;
+    const ext = path.extname(req.file.originalname).toLowerCase();
 
-    // Dynamically import Tesseract.js
+    // Dynamically import Tesseract.js or pdf-parse
     let extractedText = '';
     try {
-      const Tesseract = await import('tesseract.js');
-      const { data } = await Tesseract.recognize(filePath, 'eng', {
-        logger: (m: any) => {
-          if (m.status === 'recognizing text') {
-            console.log(`OCR progress: ${Math.round(m.progress * 100)}%`);
-          }
-        },
-      });
-      extractedText = data.text;
-    } catch (ocrErr) {
-      logger.warn('Tesseract OCR failed', { error: String(ocrErr) });
+      if (ext === '.pdf') {
+        const pdfParseModule = await import('pdf-parse');
+        const pdfParse = (pdfParseModule.default || pdfParseModule) as any;
+        const dataBuffer = fs.readFileSync(filePath);
+        const data = await pdfParse(dataBuffer);
+        extractedText = data.text;
+      } else {
+        const Tesseract = await import('tesseract.js');
+        const { data } = await Tesseract.recognize(filePath, 'eng', {
+          logger: (m: any) => {
+            if (m.status === 'recognizing text') {
+              console.log(`OCR progress: ${Math.round(m.progress * 100)}%`);
+            }
+          },
+        });
+        extractedText = data.text;
+      }
+    } catch (parseErr) {
+      logger.warn('Document parsing failed', { error: String(parseErr) });
       return sendSuccess(res, {
         receipt_url: `/uploads/ocr/${req.file.filename}`,
         ocr_success: false, extracted: null, raw_text: null,
-        message: 'OCR processing failed, receipt uploaded successfully',
+        message: 'Processing failed, file uploaded successfully',
       });
     }
 
